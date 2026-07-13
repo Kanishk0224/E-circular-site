@@ -1,24 +1,13 @@
 // app/staff/page.tsx
 "use client";
 
-import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useRouter } from "next/navigation";
 import {
   Upload, Plus, FileText, Download, ExternalLink,
-  CheckCircle2, Clock, AlertCircle, MessageSquare, X,
+  CheckCircle2, Clock, AlertCircle, MessageSquare, X, LogOut,
 } from "lucide-react";
-
-type Status = "pending" | "approved" | "rejected" | "changes_requested";
-type Circular = {
-  id: string;
-  title: string;
-  fileName: string;
-  fileUrl: string;        // object URL (demo) — replace with your storage URL
-  fileType: string;
-  uploadedAt: string;
-  hod: Status;
-  principal: Status;
-  remarks: { by: "HOD" | "Principal"; message: string; at: string }[];
-};
+import { loadCirculars, saveCirculars, type Circular, type Status } from "@/lib/circularStore";
 
 // Use fixed ISO timestamps for demo data so server/client render identically
 const initial: Circular[] = [
@@ -41,10 +30,22 @@ const initial: Circular[] = [
 type TabKey = "issue" | "processing" | "approved";
 
 export default function StaffPortal() {
+  const router = useRouter();
   const [tab, setTab] = useState<TabKey>("issue");
   const [items, setItems] = useState<Circular[]>(initial);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [detail, setDetail] = useState<Circular | null>(null);
+
+  // Load shared data on mount (client-only — localStorage isn't available during SSR)
+  useEffect(() => {
+    setItems(loadCirculars(initial));
+  }, []);
+
+  // Persist every change so HOD/Principal portals see the same data
+  useEffect(() => {
+    saveCirculars(items);
+     console.log("Saved to storage:", items); // temp debug
+  }, [items]);
 
   const processing = useMemo(
     () => items.filter(i => !(i.hod === "approved" && i.principal === "approved")),
@@ -55,28 +56,37 @@ export default function StaffPortal() {
     [items]
   );
 
-  const addCirculars = (files: FileList | File[]) => {
-    const newOnes: Circular[] = Array.from(files).map((f, idx) => ({
-      id: `c${Date.now()}-${idx}`,
-      title: f.name.replace(/\.[^.]+$/, ""),
-      fileName: f.name,
-      fileUrl: URL.createObjectURL(f),
-      fileType: f.type,
-      uploadedAt: new Date().toISOString(),
-      hod: "pending",
-      principal: "pending",
-      remarks: [],
-    }));
-    setItems(prev => [...newOnes, ...prev]);
-    setUploadOpen(false);
-    setTab("processing");
-  };
+ const addCirculars = (files: FileList | File[]) => {
+  const newOnes: Circular[] = Array.from(files).map((f, idx) => ({
+    id: `c${Date.now()}-${idx}`,
+    title: f.name.replace(/\.[^.]+$/, ""),
+    fileName: f.name,
+    fileUrl: URL.createObjectURL(f),
+    fileType: f.type,
+    uploadedAt: new Date().toISOString(),
+    hod: "pending",
+    principal: "pending",
+    remarks: [],
+    issuedBy: "staff@organisation.org", // matches header's "Signed in as"
+    department: "General Administration", // placeholder — swap for real dept later
+  }));
+  setItems(prev => [...newOnes, ...prev]);
+  
+  setUploadOpen(false);
+  setTab("processing");
+};
 
   const resubmit = (id: string) => {
     setItems(prev => prev.map(c =>
       c.id === id ? { ...c, hod: "pending", principal: "pending" } : c
     ));
+    setDetail(null);
   };
+
+  function handleLogout() {
+    document.cookie = "session=; path=/; max-age=0";
+    router.push("/login");
+  }
 
   return (
     <div className="min-h-screen bg-[#f4f1ea] text-[#0f2a22]" style={{ fontFamily: "'Nunito', sans-serif" }}>
@@ -92,8 +102,17 @@ export default function StaffPortal() {
               <h1 className="font-serif text-lg sm:text-xl">e-Circular</h1>
             </div>
           </div>
-          <div className="hidden text-right text-xs text-[#f4f1ea]/70 sm:block">
-            Signed in as <span className="text-[#f4f1ea]">staff@organisation.org</span>
+
+          <div className="flex items-center gap-4">
+            <div className="hidden text-right text-xs text-[#f4f1ea]/70 sm:block">
+              Signed in as <span className="text-[#f4f1ea]">staff@organisation.org</span>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#f4f1ea]/25 px-3.5 py-1.5 text-xs font-medium text-[#f4f1ea]/90 transition hover:border-[#f4f1ea]/50 hover:bg-[#f4f1ea]/10 hover:text-[#f4f1ea]"
+            >
+              <LogOut className="h-3.5 w-3.5" /> Logout
+            </button>
           </div>
         </div>
       </header>
@@ -305,13 +324,16 @@ function ApprovedTab({ items }: { items: Circular[] }) {
           </div>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row">
             <a
-              href={c.fileUrl} target="_blank" rel="noreferrer"
+              href={c.fileUrl}
+              target="_blank"
+              rel="noreferrer"
               className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-[#0f2a22]/20 px-4 py-2 text-sm hover:bg-[#f4f1ea]"
             >
               <ExternalLink className="h-4 w-4" /> Open
             </a>
             <a
-              href={c.fileUrl} download={c.fileName}
+              href={c.fileUrl}
+              download={c.fileName}
               className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-[#0f2a22] px-4 py-2 text-sm text-[#f4f1ea] hover:bg-[#0f2a22]/90"
             >
               <Download className="h-4 w-4" /> Download

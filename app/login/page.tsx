@@ -55,6 +55,14 @@ export default function LoginPage() {
       return;
     }
     setError("");
+
+    // Store a lightweight session so middleware can protect /staff, /hod,
+    // /principal, and so the logout button on each portal has something
+    // to clear. Cookie (not localStorage) so middleware can read it server-side.
+    document.cookie = `session=${encodeURIComponent(
+      JSON.stringify({ email: match.email, role: match.role })
+    )}; path=/; max-age=${60 * 60 * 8}`; // 8 hour session
+
     router.push(match.path);
   }
 
