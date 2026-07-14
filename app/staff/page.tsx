@@ -36,15 +36,25 @@ export default function StaffPortal() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [detail, setDetail] = useState<Circular | null>(null);
 
+  // Guards the save effect below so it never fires with the placeholder
+  // `initial` data before the real shared data has actually loaded in.
+  const isFirstRun = useRef(true);
+
   // Load shared data on mount (client-only — localStorage isn't available during SSR)
   useEffect(() => {
     setItems(loadCirculars(initial));
   }, []);
 
-  // Persist every change so HOD/Principal portals see the same data
+  // Persist changes — but skip the very first run, since on mount `items`
+  // still holds the placeholder `initial` value (the real load above hasn't
+  // landed in state yet on that same render). Saving here would overwrite
+  // real shared data written by other portals (e.g. HOD approvals).
   useEffect(() => {
+    if (isFirstRun.current) {
+      isFirstRun.current = false;
+      return;
+    }
     saveCirculars(items);
-     console.log("Saved to storage:", items); // temp debug
   }, [items]);
 
   const processing = useMemo(
@@ -56,22 +66,33 @@ export default function StaffPortal() {
     [items]
   );
 
- const addCirculars = (files: FileList | File[]) => {
-  const newOnes: Circular[] = Array.from(files).map((f, idx) => ({
-    id: `c${Date.now()}-${idx}`,
-    title: f.name.replace(/\.[^.]+$/, ""),
-    fileName: f.name,
-    fileUrl: URL.createObjectURL(f),
-    fileType: f.type,
-    uploadedAt: new Date().toISOString(),
-    hod: "pending",
-    principal: "pending",
-    remarks: [],
-    issuedBy: "staff@organisation.org", // matches header's "Signed in as"
-    department: "General Administration", // placeholder — swap for real dept later
-  }));
+ function readFileAsDataURL(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+const addCirculars = async (files: FileList | File[]) => {
+  const fileArray = Array.from(files);
+  const newOnes: Circular[] = await Promise.all(
+    fileArray.map(async (f, idx) => ({
+      id: `c${Date.now()}-${idx}`,
+      title: f.name.replace(/\.[^.]+$/, ""),
+      fileName: f.name,
+      fileUrl: await readFileAsDataURL(f), // real, portable file content — works across tabs/reloads
+      fileType: f.type,
+      uploadedAt: new Date().toISOString(),
+      hod: "pending" as const,
+      principal: "pending" as const,
+      remarks: [],
+      issuedBy: "staff@organisation.org",
+      department: "General Administration",
+    }))
+  );
   setItems(prev => [...newOnes, ...prev]);
-  
   setUploadOpen(false);
   setTab("processing");
 };
@@ -323,21 +344,21 @@ function ApprovedTab({ items }: { items: Circular[] }) {
             </div>
           </div>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-            <a
-              href={c.fileUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-[#0f2a22]/20 px-4 py-2 text-sm hover:bg-[#f4f1ea]"
-            >
-              <ExternalLink className="h-4 w-4" /> Open
-            </a>
-            <a
-              href={c.fileUrl}
-              download={c.fileName}
-              className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-[#0f2a22] px-4 py-2 text-sm text-[#f4f1ea] hover:bg-[#0f2a22]/90"
-            >
-              <Download className="h-4 w-4" /> Download
-            </a>
+              <a
+                href={c.fileUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-[#0f2a22]/20 px-4 py-2 text-sm hover:bg-[#f4f1ea]"
+              >
+                <ExternalLink className="h-4 w-4" /> Open
+              </a>
+              <a
+                href={c.fileUrl}
+                download={c.fileName}
+                className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-[#0f2a22] px-4 py-2 text-sm text-[#f4f1ea] hover:bg-[#0f2a22]/90"
+              >
+                <Download className="h-4 w-4" /> Download
+              </a>
           </div>
         </div>
       ))}

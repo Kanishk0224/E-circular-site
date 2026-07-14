@@ -78,6 +78,58 @@ function formatDate(iso: string) {
   try { return new Date(iso).toLocaleDateString("en-GB"); } catch { return iso; }
 }
 
+// ─── Document Preview (renders the ACTUAL uploaded file) ───────────────────
+function DocumentPreview({ circular }: { circular: StoreCircular }) {
+  const isImage = circular.fileType?.startsWith("image/");
+  const isPdf = circular.fileType === "application/pdf";
+  const hasRealFile = circular.fileUrl && circular.fileUrl !== "#";
+
+  if (!hasRealFile) {
+    return (
+      <div className="rounded-lg border border-dashed border-[#0f2a22]/20 bg-[#f4f1ea]/60 p-8 text-center">
+        <p className="text-[#0f2a22]/50 text-xs italic">No file preview available for this demo entry.</p>
+      </div>
+    );
+  }
+
+  if (isImage) {
+    return (
+      <img
+        src={circular.fileUrl}
+        alt={circular.title}
+        className="w-full rounded-lg border border-[#0f2a22]/10"
+      />
+    );
+  }
+
+  if (isPdf) {
+    return (
+      <iframe
+        src={circular.fileUrl}
+        title={circular.title}
+        className="w-full h-[500px] rounded-lg border border-[#0f2a22]/10"
+      />
+    );
+  }
+
+  // .doc/.docx and other formats can't render natively in-browser
+  return (
+    <div className="rounded-lg border border-dashed border-[#0f2a22]/20 bg-[#f4f1ea]/60 p-8 text-center">
+      <p className="text-[#0f2a22] text-sm font-medium mb-1">{circular.fileName}</p>
+      <p className="text-[#0f2a22]/50 text-xs mb-4">
+        This file type can't be previewed directly in the browser.
+      </p>
+      <a
+        href={circular.fileUrl}
+        download={circular.fileName}
+        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#0f2a22] text-white text-xs font-medium hover:bg-[#0f2a22]/90"
+      >
+        Download to view
+      </a>
+    </div>
+  );
+}
+
 // ─── Circular Viewer Modal ─────────────────────────────────────────────────
 function CircularViewer({
   circular,
@@ -131,21 +183,19 @@ function CircularViewer({
         {/* Document preview area */}
         <div className="flex-1 overflow-y-auto px-7 py-6 bg-[#f4f1ea]">
           <div className="bg-white rounded-xl border border-[#0f2a22]/10 min-h-80 p-8 relative shadow-sm">
-            <div className="text-center mb-8">
+            <div className="text-center mb-6">
               <p className="text-[#0f2a22] text-xs tracking-widest uppercase font-semibold mb-1">Government College of Engineering</p>
               <p className="text-[#0f2a22]/60 text-xs mb-4">Department of {circular.department ?? "—"}</p>
               <div className="w-16 h-px bg-[#0f2a22]/15 mx-auto mb-4" />
               <h3 className="text-[#0f2a22] text-xl font-semibold mb-1" style={{ fontFamily: "'Gilda Display', serif" }}>{circular.title}</h3>
               <p className="text-[#0f2a22]/40 text-xs">Ref No: GCE/2026/{circular.id} · Date: {formatDate(circular.uploadedAt)}</p>
             </div>
-            <div className="space-y-3 text-[#0f2a22]/80 text-sm leading-relaxed">
-              <p>All students and staff members are hereby informed regarding the above-mentioned circular. This communication is issued on behalf of the college administration and is to be followed with immediate effect.</p>
-              <p>The concerned departments are requested to take necessary action and ensure compliance. Any queries may be addressed to the office of the Head of Department.</p>
-              <p>This circular is issued with the approval of the academic committee and shall remain in force until further notice.</p>
-            </div>
+
+            {/* Actual uploaded document, rendered based on its real file type */}
+            <DocumentPreview circular={circular} />
 
             {/* Signature boxes */}
-            <div className="flex gap-6 mt-10 pt-6 border-t border-[#0f2a22]/10">
+            <div className="flex gap-6 mt-8 pt-6 border-t border-[#0f2a22]/10">
               <div className="flex-1 border border-dashed border-[#0f2a22]/25 rounded-xl p-4 min-h-[80px] flex flex-col items-center justify-center">
                 <p className="text-[#0f2a22]/40 text-xs mb-1">Staff Signature</p>
                 <p className="text-[#0f2a22] text-sm font-medium italic" style={{ fontFamily: "'Gilda Display', serif" }}>
@@ -241,12 +291,14 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("issued");
   const [circulars, setCirculars] = useState<StoreCircular[]>(FALLBACK);
   const [openCircular, setOpenCircular] = useState<StoreCircular | null>(null);
-  const hasLoadedRef = useRef(false);
+
+  // Guards the save effect below so it never fires with the placeholder
+  // FALLBACK data before the real shared data has actually loaded in.
+  const isFirstRun = useRef(true);
 
   // Load shared data on mount, and pick up changes made in other tabs (e.g. staff uploads)
   useEffect(() => {
     setCirculars(loadCirculars(FALLBACK));
-    hasLoadedRef.current = true;
     const onStorage = (e: StorageEvent) => {
       if (e.key === "ecircular:circulars") setCirculars(loadCirculars(FALLBACK));
     };
@@ -254,11 +306,15 @@ export default function App() {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // Only save AFTER the initial load has completed — otherwise this fires on
-  // first render with the hardcoded FALLBACK and overwrites real shared data
-  // that other portals (e.g. staff) may have already written.
+  // Persist changes — but skip the very first run, since on mount `circulars`
+  // still holds the placeholder FALLBACK value (the real load above hasn't
+  // landed in state yet on that same render). Saving here would overwrite
+  // real shared data written by other portals (e.g. staff uploads).
   useEffect(() => {
-    if (!hasLoadedRef.current) return;
+    if (isFirstRun.current) {
+      isFirstRun.current = false;
+      return;
+    }
     saveCirculars(circulars);
   }, [circulars]);
 
